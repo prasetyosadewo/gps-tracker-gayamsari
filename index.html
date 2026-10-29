@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aplikasi Pelacak GPS - Realtime</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+    
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <style>
+        /* Memastikan peta mengambil sisa tinggi pada layar */
+        #map { z-index: 10; height: 100%; width: 100%; }
+        
+        /* Animasi pulse */
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(34, 197, 94, 0); }
+            100% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+        }
+        .status-active { animation: pulse-ring 2s infinite; }
+        
+        /* Layout untuk fixed footer */
+        body { padding-bottom: 3rem; /* Memberi ruang untuk footer */ }
+        .fixed-footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 3rem;
+            background-color: #1e293b;
+            color: #94a3b8;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.875rem;
+            z-index: 500; /* Di atas peta Leaflet */
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans h-screen flex flex-col overflow-hidden">
+
+    <!-- LAYAR: PEMILIHAN PERAN -->
+    <div id="role-selector" class="flex-1 flex items-center justify-center bg-slate-100 absolute inset-0 z-[600]">
+        <div class="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
+            <div class="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                <i class="ph-fill ph-navigation-arrow text-3xl"></i>
+            </div>
+            <h1 class="text-2xl font-bold mb-2 text-slate-800">Sistem Pelacak GPS</h1>
+            <p class="text-slate-500 mb-8 text-sm">Pilih peran Anda untuk melanjutkan</p>
+            
+            <div id="loading-auth" class="hidden mb-4 text-sm text-blue-600 font-medium animate-pulse">
+                Menghubungkan ke server...
+            </div>
+
+            <div class="space-y-4" id="role-buttons">
+                <button onclick="selectRole('user')" class="w-full flex items-center justify-between p-4 border-2 border-slate-200 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-all group">
+                    <div class="flex items-center gap-3">
+                        <div class="bg-slate-100 group-hover:bg-blue-100 p-2 rounded-lg text-slate-500 group-hover:text-blue-600 transition-colors">
+                            <i class="ph-bold ph-broadcast text-xl"></i>
+                        </div>
+                        <div class="text-left">
+                            <h3 class="font-semibold text-slate-700 group-hover:text-blue-700">Petugas / User</h3>
+                            <p class="text-xs text-slate-500">Transmisikan lokasi perangkat ini</p>
+                        </div>
+                    </div>
+                    <i class="ph-bold ph-caret-right text-slate-400 group-hover:text-blue-500"></i>
+                </button>
+
+                <button onclick="selectRole('admin')" class="w-full flex items-center justify-between p-4 border-2 border-slate-200 rounded-xl hover:border-emerald-500 hover:bg-emerald-50 transition-all group">
+                    <div class="flex items-center gap-3">
+                        <div class="bg-slate-100 group-hover:bg-emerald-100 p-2 rounded-lg text-slate-500 group-hover:text-emerald-600 transition-colors">
+                            <i class="ph-bold ph-map-trifold text-xl"></i>
+                        </div>
+                        <div class="text-left">
+                            <h3 class="font-semibold text-slate-700 group-hover:text-emerald-700">Admin Monitor</h3>
+                            <p class="text-xs text-slate-500">Pantau lokasi petugas di peta</p>
+                        </div>
+                    </div>
+                    <i class="ph-bold ph-caret-right text-slate-400 group-hover:text-emerald-500"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- LAYAR: USER / PETUGAS -->
+    <div id="view-user" class="hidden flex-1 flex flex-col items-center justify-center bg-slate-100 p-6 h-full pb-12">
+        <div class="bg-white rounded-2xl shadow-lg w-full max-w-sm overflow-hidden">
+            <div class="bg-blue-600 p-6 text-center text-white">
+                <i class="ph-bold ph-broadcast text-4xl mb-2"></i>
+                <h2 class="text-xl font-bold">Transmitter Lokasi</h2>
+                <p class="text-blue-200 text-sm">Mode Petugas Lapangan</p>
+            </div>
+            
+            <div class="p-6">
+                <!-- Status -->
+                <div class="flex items-center justify-center gap-2 mb-8 px-4 py-2 bg-slate-50 rounded-full border border-slate-100">
+                    <div id="u-statusDot" class="w-3 h-3 rounded-full bg-slate-400"></div>
+                    <span id="u-statusText" class="text-slate-600 font-medium">Siap Mengirim</span>
+                </div>
+
+                <!-- Info Koordinat -->
+                <div class="grid grid-cols-2 gap-4 mb-8">
+                    <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 text-center">
+                        <p class="text-xs text-slate-500 mb-1">Latitude</p>
+                        <p id="u-lat" class="font-mono font-semibold text-slate-700">-</p>
+                    </div>
+                    <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 text-center">
+                        <p class="text-xs text-slate-500 mb-1">Longitude</p>
+                        <p id="u-lng" class="font-mono font-semibold text-slate-700">-</p>
+                    </div>
+                </div>
+
+                <!-- Kontrol -->
+                <button id="btnTransmit" onclick="toggleTransmission()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl transition-colors shadow-lg shadow-blue-200 flex items-center justify-center gap-2">
+                    <i id="btnTransmitIcon" class="ph-bold ph-play"></i>
+                    <span id="btnTransmitText">Mulai Transmisi</span>
+                </button>
+
+                <p id="u-message" class="text-center text-sm text-red-500 mt-4 hidden"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- LAYAR: ADMIN MONITOR -->
+    <div id="view-admin" class="hidden flex-1 h-full w-full flex flex-col md:flex-row pb-12 relative">
+        
+        <!-- Sidebar Admin -->
+        <aside class="w-full md:w-80 bg-white shadow-xl flex flex-col z-20 shrink-0">
+            <div class="p-5 bg-emerald-600 text-white flex items-center justify-between">
+                <div>
+                    <h2 class="text-lg font-bold flex items-center gap-2">
+                        <i class="ph-bold ph-map-trifold"></i> Monitor Pusat
+                    </h2>
+                    <p class="text-emerald-100 text-xs mt-1">Status Real-time</p>
+                </div>
+                <button onclick="location.reload()" class="p-2 bg-emerald-700 rounded-lg hover:bg-emerald-800 transition-colors" title="Ganti Peran">
+                    <i class="ph-bold ph-swap"></i>
+                </button>
+            </div>
+            
+            <div class="p-5 flex-1 overflow-y-auto">
+                <div class="mb-4">
+                    <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Status Koneksi</h3>
+                    <div class="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-lg border border-slate-100">
+                        <div id="a-statusDot" class="w-2.5 h-2.5 rounded-full bg-slate-400"></div>
+                        <span id="a-statusText" class="text-sm font-medium text-slate-600">Menunggu data...</span>
+                    </div>
+                </div>
+
+                <div class="mb-4 space-y-3">
+                    <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Data Petugas</h3>
+                    <div class="bg-slate-50 p-3 rounded-lg border border-slate-100 flex items-start gap-3">
+                        <i class="ph-fill ph-map-pin text-blue-500 mt-1"></i>
+                        <div>
+                            <p class="text-xs text-slate-500">Koordinat</p>
+                            <p class="text-sm font-mono font-medium text-slate-700 break-all" id="a-coords">-</p>
+                        </div>
+                    </div>
+                    <div class="bg-slate-50 p-3 rounded-lg border border-slate-100 flex items-start gap-3">
+                        <i class="ph-fill ph-clock text-blue-500 mt-1"></i>
+                        <div>
+                            <p class="text-xs text-slate-500">Pembaruan Terakhir</p>
+                            <p class="text-sm font-medium text-slate-700" id="a-time">-</p>
+                        </div>
+                    </div>
+                </div>
+
+                <button onclick="centerAdminMap()" class="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
+                    <i class="ph-bold ph-crosshair"></i> Fokus ke Lokasi
+                </button>
+            </div>
+        </aside>
+
+        <!-- Area Peta Admin -->
+        <main class="flex-1 relative bg-slate-200 h-[50vh] md:h-full">
+            <div id="map"></div>
+        </main>
+    </div>
+
+    <!-- FOOTER TETAP -->
+    <footer class="fixed-footer">
+        Copyright &copy; 2026 Mas Adi Prasetyo Sadewo, S.Kom
+    </footer>
+
+    <!-- Scripts -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    
+    <!-- Firebase SDK (Module) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Lingkungan Immersive
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'demo-gps-app';
+        let firebaseConfig = null;
+        
+        // Dummy config if not in environment
+        if (typeof __firebase_config !== 'undefined') {
+            firebaseConfig = JSON.parse(__firebase_config);
+        } else {
+            console.error("Firebase config tidak ditemukan.");
+            document.getElementById('loading-auth').innerText = "Error: Konfigurasi Firebase tidak tersedia.";
+            document.getElementById('loading-auth').classList.remove('hidden');
+        }
+
+        let app, db, auth;
+        let isFirebaseReady = false;
+
+        // Path Dokumen Publik (Digunakan bersama oleh Admin dan User)
+        // STRUKTUR WAJIB: /artifacts/{appId}/public/data/{collectionName}/{docId}
+        const LOC_DOC_PATH = ['artifacts', appId, 'public', 'data', 'locations', 'shared_device'];
+
+        // --- Inisialisasi Firebase ---
+        async function initFirebase() {
+            if (!firebaseConfig) return false;
+            
+            try {
+                document.getElementById('loading-auth').classList.remove('hidden');
+                document.getElementById('role-buttons').classList.add('opacity-50', 'pointer-events-none');
+
+                app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                // Autentikasi Wajib sebelum query
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                isFirebaseReady = true;
+                document.getElementById('loading-auth').classList.add('hidden');
+                document.getElementById('role-buttons').classList.remove('opacity-50', 'pointer-events-none');
+                return true;
+            } catch (error) {
+                console.error("Firebase Init Error:", error);
+                document.getElementById('loading-auth').innerText = "Gagal terhubung ke server.";
+                document.getElementById('loading-auth').classList.replace('text-blue-600', 'text-red-600');
+                return false;
+            }
+        }
+
+        // Panggil inisialisasi saat load
+        initFirebase();
+
+        // --- Variabel Global untuk Aplikasi ---
+        let currentRole = null;
+        
+        // Variabel User
+        let watchId = null;
+        let isTransmitting = false;
+        
+        // Variabel Admin
+        let adminMap = null;
+        let adminMarker = null;
+        let adminAccuracyCircle = null;
+        let lastKnownAdminPos = null;
+
+        // Ekspos fungsi ke global scope agar bisa dipanggil dari HTML onclick
+        window.selectRole = function(role) {
+            if (!isFirebaseReady) return;
+            
+            currentRole = role;
+            document.getElementById('role-selector').classList.add('hidden');
+            
+            if (role === 'user') {
+                document.getElementById('view-user').classList.remove('hidden');
+                document.getElementById('view-user').classList.add('flex');
+            } else if (role === 'admin') {
+                document.getElementById('view-admin').classList.remove('hidden');
+                document.getElementById('view-admin').classList.add('flex');
+                initAdminMap();
+                startListeningAdmin();
+            }
+        }
+
+        // ==========================================
+        // LOGIKA PERAN: USER (TRANSMITTER)
+        // ==========================================
+        window.toggleTransmission = function() {
+            if (isTransmitting) {
+                stopTransmission();
+            } else {
+                startTransmission();
+            }
+        }
+
+        function startTransmission() {
+            if (!("geolocation" in navigator)) {
+                showUserError("Geolokasi tidak didukung oleh browser Anda.");
+                return;
+            }
+
+            isTransmitting = true;
+            updateUserUI();
+
+            const options = { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 };
+            watchId = navigator.geolocation.watchPosition(
+                async (position) => {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+                    const accuracy = position.coords.accuracy;
+
+                    // Update UI User
+                    document.getElementById('u-lat').innerText = lat.toFixed(6);
+                    document.getElementById('u-lng').innerText = lng.toFixed(6);
+                    document.getElementById('u-statusText').innerText = "Mentransmisikan...";
+                    document.getElementById('u-statusDot').className = "w-3 h-3 rounded-full bg-green-500 status-active";
+                    document.getElementById('u-message').classList.add('hidden');
+
+                    // Simpan ke Firestore
+                    try {
+                        const locRef = doc(db, ...LOC_DOC_PATH);
+                        await setDoc(locRef, {
+                            lat: lat,
+                            lng: lng,
+                            accuracy: accuracy,
+                            timestamp: Date.now(),
+                            senderId: auth.currentUser.uid
+                        });
+                    } catch (err) {
+                        console.error("Error saving location:", err);
+                        showUserError("Gagal mengirim data ke server.");
+                    }
+                },
+                (error) => {
+                    console.error("Geolocation error:", error);
+                    stopTransmission();
+                    showUserError("Gagal mendapatkan lokasi GPS. Periksa izin lokasi.");
+                },
+                options
+            );
+        }
+
+        function stopTransmission() {
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+            }
+            isTransmitting = false;
+            updateUserUI();
+            
+            document.getElementById('u-statusText').innerText = "Berhenti";
+            document.getElementById('u-statusDot').className = "w-3 h-3 rounded-full bg-red-500";
+        }
+
+        function updateUserUI() {
+            const btn = document.getElementById('btnTransmit');
+            const icon = document.getElementById('btnTransmitIcon');
+            const text = document.getElementById('btnTransmitText');
+
+            if (isTransmitting) {
+                btn.classList.replace('bg-blue-600', 'bg-red-500');
+                btn.classList.replace('hover:bg-blue-700', 'hover:bg-red-600');
+                btn.classList.replace('shadow-blue-200', 'shadow-red-200');
+                icon.className = "ph-bold ph-stop";
+                text.innerText = "Hentikan Transmisi";
+            } else {
+                btn.classList.replace('bg-red-500', 'bg-blue-600');
+                btn.classList.replace('hover:bg-red-600', 'hover:bg-blue-700');
+                btn.classList.replace('shadow-red-200', 'shadow-blue-200');
+                icon.className = "ph-bold ph-play";
+                text.innerText = "Mulai Transmisi";
+            }
+        }
+
+        function showUserError(msg) {
+            const msgEl = document.getElementById('u-message');
+            msgEl.innerText = msg;
+            msgEl.classList.remove('hidden');
+        }
+
+
+        // ==========================================
+        // LOGIKA PERAN: ADMIN (MONITOR)
+        // ==========================================
+        function initAdminMap() {
+            // Inisialisasi peta hanya jika belum ada
+            if (!adminMap) {
+                // Default view (Indonesia)
+                adminMap = L.map('map').setView([-2.5489, 118.0149], 5);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    maxZoom: 19,
+                    attribution: '© OpenStreetMap contributors'
+                }).addTo(adminMap);
+                
+                // Pastikan ukuran peta disesuaikan setelah div ditampilkan
+                setTimeout(() => { adminMap.invalidateSize(); }, 300);
+            }
+        }
+
+        function startListeningAdmin() {
+            if (!db) return;
+
+            const locRef = doc(db, ...LOC_DOC_PATH);
+            
+            // Dengarkan perubahan dokumen secara real-time
+            onSnapshot(locRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    updateAdminView(data);
+                } else {
+                    document.getElementById('a-statusText').innerText = "Belum ada transmisi data";
+                    document.getElementById('a-statusDot').className = "w-2.5 h-2.5 rounded-full bg-orange-400";
+                }
+            }, (error) => {
+                console.error("Firestore listen error:", error);
+                document.getElementById('a-statusText').innerText = "Koneksi terputus";
+                document.getElementById('a-statusDot').className = "w-2.5 h-2.5 rounded-full bg-red-500";
+            });
+        }
+
+        function updateAdminView(data) {
+            const lat = data.lat;
+            const lng = data.lng;
+            const accuracy = data.accuracy || 0;
+            
+            lastKnownAdminPos = [lat, lng];
+
+            // Update UI Sidebar Admin
+            document.getElementById('a-coords').innerText = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+            
+            const timeStr = new Date(data.timestamp).toLocaleTimeString('id-ID');
+            document.getElementById('a-time').innerText = timeStr;
+            
+            document.getElementById('a-statusText').innerText = "Menerima Data";
+            document.getElementById('a-statusDot').className = "w-2.5 h-2.5 rounded-full bg-emerald-500 status-active";
+
+            // Update Peta Admin
+            if (!adminMarker) {
+                // Ikon kustom untuk admin
+                const customIcon = L.divIcon({
+                    className: 'custom-div-icon',
+                    html: `<div style="background-color: #ef4444; width: 18px; height: 18px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.5);"></div>`,
+                    iconSize: [18, 18],
+                    iconAnchor: [9, 9]
+                });
+
+                adminMarker = L.marker([lat, lng], {icon: customIcon}).addTo(adminMap);
+                adminAccuracyCircle = L.circle([lat, lng], {
+                    radius: accuracy,
+                    color: '#ef4444',
+                    fillColor: '#f87171',
+                    fillOpacity: 0.2,
+                    weight: 1
+                }).addTo(adminMap);
+
+                // Otomatis zoom ke lokasi pertama kali menerima data
+                adminMap.setView([lat, lng], 16);
+            } else {
+                // Pindahkan marker yang sudah ada
+                adminMarker.setLatLng([lat, lng]);
+                adminAccuracyCircle.setLatLng([lat, lng]);
+                adminAccuracyCircle.setRadius(accuracy);
+            }
+        }
+
+        window.centerAdminMap = function() {
+            if (adminMap && lastKnownAdminPos) {
+                adminMap.setView(lastKnownAdminPos, 16);
+            }
+        }
+
+        // Tangani resize window untuk map
+        window.addEventListener('resize', () => {
+            if (adminMap) adminMap.invalidateSize();
+        });
+
+    </script>
+</body>
+</html>
